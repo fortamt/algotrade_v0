@@ -6,14 +6,28 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go-trader-bot/utils"
 )
 
 // Это будет WebSocket-адрес Binance Futures Testnet
 // Мы подписываемся на 1-минутные свечи по BTCUSDT
-const wsURL = "wss://fstream.binance.com/ws/btcusdt@kline_1m"
+
+const (
+	wsURL    = "wss://fstream.binance.com/ws/btcusdt@kline_1m"
+	symbol   = "BTCUSDT"
+	interval = "1m"
+)
+
+var limit = 500
+
+var (
+	candleBuffer []utils.Kline
+	mu           sync.Mutex
+)
 
 func main() {
 	// Это нужно, чтобы корректно завершать программу по Ctrl+C
@@ -30,6 +44,14 @@ func main() {
 	// Канал для завершения чтения
 	done := make(chan struct{})
 
+	initialCandles, err := utils.GetRecentCandles(symbol, interval, limit)
+	if err != nil {
+		log.Fatalf("Failed to load initial candles: %v", err)
+	}
+
+	candleBuffer = initialCandles
+	log.Printf("Loaded %d candles", len(candleBuffer))
+
 	// Читаем сообщения от Binance в отдельной горутине
 	go func() {
 		defer close(done)
@@ -40,20 +62,24 @@ func main() {
 				return
 			}
 
-			var data struct {
-				Kline struct {
-					Close   string `json:"c"`
-					IsFinal bool   `json:"x"`
-				} `json:"k"`
+			var payload struct {
+				K utils.Kline `json:"k"`
 			}
 
-			if err := json.Unmarshal(message, &data); err != nil {
+			if err := json.Unmarshal(message, &payload); err != nil {
 				log.Println("Ошибка парсинга JSON:", err)
 				continue
 			}
 
-			if data.Kline.IsFinal {
-				fmt.Printf("Закрытие свечи: %s | Закрыта: %v\n", data.Kline.Close, data.Kline.IsFinal)
+			if payload.K.IsFinal {
+				mu.Lock()
+				if len(candleBuffer) >= limit {
+					candleBuffer = candleBuffer[1:]
+				}
+				candleBuffer = append(candleBuffer, payload.K)
+				mu.Unlock()
+
+				fmt.Printf("Новая закрытая свеча: close=%v, total=%d\n", payload.K.Close, len(candleBuffer))
 			}
 		}
 	}()
