@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"time"
 
+	"go-trader-bot/redis"
 	"go-trader-bot/utils"
 
 	"github.com/gorilla/websocket"
@@ -25,11 +25,6 @@ const (
 
 var limit = 500
 
-var (
-	candleBuffer []utils.Kline
-	mu           sync.Mutex
-)
-
 func main() {
 	// Это нужно, чтобы корректно завершать программу по Ctrl+C
 	interrupt := make(chan os.Signal, 1)
@@ -45,13 +40,20 @@ func main() {
 	// Канал для завершения чтения
 	done := make(chan struct{})
 
-	initialCandles, err := utils.GetRecentCandles(symbol, interval, limit)
+	store := redisstore.NewCandleStore("localhost:6379")
+
+	restCandles, err := utils.GetRecentCandles(symbol, interval, limit)
 	if err != nil {
-		log.Fatalf("Failed to load initial candles: %v", err)
+		log.Fatalf("REST load failed: %v", err)
 	}
 
-	candleBuffer = initialCandles
-	log.Printf("Loaded %d candles", len(candleBuffer))
+	for _, c := range restCandles {
+		if err := store.SaveCandle(symbol, interval, c); err != nil {
+			log.Println("Redis write error:", err)
+		}
+	}
+
+	log.Printf("Инициализирован Redis-буфер: %d свечей", len(restCandles))
 
 	// Читаем сообщения от Binance в отдельной горутине
 	go func() {
@@ -73,16 +75,12 @@ func main() {
 			}
 
 			if payload.K.IsFinal {
-				mu.Lock()
-				newCandle, _ := payload.K.ToKline()
-				if len(candleBuffer) >= limit {
-					candleBuffer = candleBuffer[1:]
+				k, _ := payload.K.ToKline()
+				if err := store.SaveCandle(symbol, interval, k); err != nil {
+					log.Println("Redis write error:", err)
+				} else {
+					fmt.Printf("Redis updated: close=%.2f\n", k.Close)
 				}
-				candleBuffer = append(candleBuffer, newCandle)
-				mu.Unlock()
-				parsed := utils.ParseRawFloat(payload.K.Close)
-
-				fmt.Printf("Новая закрытая свеча: close=%v, total=%d\n", parsed, len(candleBuffer))
 			}
 		}
 	}()

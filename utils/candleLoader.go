@@ -56,7 +56,7 @@ func GetRecentCandles(symbol string, interval string, limit int) ([]Kline, error
 
 }
 
-func mustParseFloatFromString(v interface{}) float64 {
+func mustParseFloatFromString(v any) float64 {
 	s, ok := v.(string)
 	if !ok {
 		return 0
