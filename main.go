@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"go-trader-bot/utils"
+
+	"github.com/gorilla/websocket"
 )
 
 // Это будет WebSocket-адрес Binance Futures Testnet
@@ -63,7 +64,7 @@ func main() {
 			}
 
 			var payload struct {
-				K utils.Kline `json:"k"`
+				K utils.WebSocketKlineRaw `json:"k"`
 			}
 
 			if err := json.Unmarshal(message, &payload); err != nil {
@@ -73,13 +74,15 @@ func main() {
 
 			if payload.K.IsFinal {
 				mu.Lock()
+				newCandle, _ := payload.K.ToKline()
 				if len(candleBuffer) >= limit {
 					candleBuffer = candleBuffer[1:]
 				}
-				candleBuffer = append(candleBuffer, payload.K)
+				candleBuffer = append(candleBuffer, newCandle)
 				mu.Unlock()
+				parsed := utils.ParseRawFloat(payload.K.Close)
 
-				fmt.Printf("Новая закрытая свеча: close=%v, total=%d\n", payload.K.Close, len(candleBuffer))
+				fmt.Printf("Новая закрытая свеча: close=%v, total=%d\n", parsed, len(candleBuffer))
 			}
 		}
 	}()
