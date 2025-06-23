@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go-trader-bot/redis"
+	"go-trader-bot/strategy"
 	"go-trader-bot/utils"
 
 	"github.com/gorilla/websocket"
@@ -26,6 +27,8 @@ const (
 var limit = 500
 
 func main() {
+	strategy.Register(&strategy.Breakout{})
+	go strategy.StartStrategyWorker("localhost:6379")
 	// Это нужно, чтобы корректно завершать программу по Ctrl+C
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
@@ -40,7 +43,8 @@ func main() {
 	// Канал для завершения чтения
 	done := make(chan struct{})
 
-	store := redisstore.NewCandleStore("localhost:6379")
+	rdb := redisstore.NewClient("localhost:6379")
+	store := redisstore.NewCandleStoreFromClient(rdb)
 
 	restCandles, err := utils.GetRecentCandles(symbol, interval, limit)
 	if err != nil {
